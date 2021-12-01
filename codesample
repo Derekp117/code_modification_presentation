@@ -1,0 +1,83 @@
+
+void Planner::initializeLookups() {
+  if (Constants::dubinsLookup) {
+    Lookup::dubinsLookup(dubinsLookup);
+  }
+
+  Lookup::collisionLookup(collisionLookup);
+}
+
+
+void Planner::setMap(const nav_msgs::OccupancyGrid::Ptr map) {
+  if (Constants::coutDEBUG) {
+    std::cout << "I am seeing the map..." << std::endl;
+  }
+
+  grid = map;
+  configurationSpace.updateGrid(map);
+
+  int height = map->info.height;
+  int width = map->info.width;
+  bool** binMap;
+  binMap = new bool*[width];
+
+  for (int x = 0; x < width; x++) { binMap[x] = new bool[height]; }
+
+  for (int x = 0; x < width; ++x) {
+    for (int y = 0; y < height; ++y) {
+      binMap[x][y] = map->data[y * width + x] ? true : false;
+    }
+  }
+
+  voronoiDiagram.initializeMap(width, height, binMap);
+  voronoiDiagram.update();
+  voronoiDiagram.visualize();
+
+  if (!Constants::manual && listener.canTransform("/map", ros::Time(0), "/base_link", ros::Time(0), "/map", nullptr)) {
+
+    listener.lookupTransform("/map", "/base_link", ros::Time(0), transform);
+
+    start.pose.pose.position.x = transform.getOrigin().x();
+    start.pose.pose.position.y = transform.getOrigin().y();
+    tf::quaternionTFToMsg(transform.getRotation(), start.pose.pose.orientation);
+    
+   
+    if (grid->info.height >= start.pose.pose.position.y && start.pose.pose.position.y >= 0 &&
+        grid->info.width >= start.pose.pose.position.x && start.pose.pose.position.x >= 0) {
+      
+      validStart = true;
+    } else  {
+      validStart = false;
+    }
+
+    plan();
+  }
+}
+
+
+void Planner::setStart(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& initial) {
+  float x = initial->pose.pose.position.x / Constants::cellSize;
+  float y = initial->pose.pose.position.y / Constants::cellSize;
+  float t = tf::getYaw(initial->pose.pose.orientation);
+
+  geometry_msgs::PoseStamped startN;
+  startN.pose.position = initial->pose.pose.position;
+  startN.pose.orientation = initial->pose.pose.orientation;
+  startN.header.frame_id = "map";
+  startN.header.stamp = ros::Time::now();
+
+  std::cout << "I am seeing a new start x:" << x << " y:" << y << " t:" << Helper::toDeg(t) << std::endl;
+
+  if (grid->info.height >= y && y >= 0 && grid->info.width >= x && x >= 0) {
+    validStart = true;
+    start = *initial;
+
+    if (Constants::manual) { plan();}
+
+    
+    pubStart.publish(startN);
+  } else {
+    std::cout << "invalid start x:" << x << " y:" << y << " t:" << Helper::toDeg(t) << std::endl;
+  }
+}
+
